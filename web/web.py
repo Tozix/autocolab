@@ -5,16 +5,35 @@ import traceback
 import urllib
 from time import sleep
 
+import numpy as np
+import scipy.interpolate as si
 import undetected_chromedriver as uc
+from dotenv import load_dotenv
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 import logger
 from assai import AssemblyAI
 
+USER_DATA_DIR = os.getenv('USER_DATA_DIR')
+EMAIL = os.getenv('EMAIL')
+PASSWORD = os.getenv('PASSWORD')
+
+load_dotenv()
 log = logger.get_logger(__name__)
+
+API_KEY = os.getenv('API_KEY')
+UPLOAD_ENDPOINT = os.getenv('UPLOAD_ENDPOINT')
+TRANSCRIPT_ENDPOINT = os.getenv('TRANSCRIPT_ENDPOINT')
+USER_DATA_DIR = "/home/tozix/dev/autocolab/chrome"
+MIN_RAND = 0.64
+MAX_RAND = 1.27
+LONG_MIN_RAND = 4.78
+LONG_MAX_RAND = 11.1
 
 
 class WebAction:
@@ -28,7 +47,7 @@ class WebAction:
             log.debug("Запущен режим с просмотром")
        # options.add_argument('--remote-debugging-port=9222')
         options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--window-size=1600,900")
+        options.add_argument("--window-size=1024,768")
         # Отключаем инфобары
         options.add_argument("--disable-infobars")
         # Работать в полноэранном режиме
@@ -38,20 +57,25 @@ class WebAction:
         options.add_experimental_option(
             "prefs", {"profile.default_content_setting_values.notifications": 1}
         )
-        # options.add_argument('--allow-profiles-outside-user-dir')
+        options.add_argument('--allow-profiles-outside-user-dir')
         # сбрасывает данные профиля в файл через n-ое число секунд.
-        # options.add_argument('--profiling-flush=10')
+        options.add_argument('--profiling-flush=10')
         # минимизирует потерю данных.
-        # options.add_argument('--enable-aggressive-domstorage-flushing')
+        options.add_argument('--enable-aggressive-domstorage-flushing')
         options.add_argument('--enable-profile-shortcut-manager')
-        # options.add_argument(f'--user-data-dir={USER_DATA_DIR}')
-        # options.add_argument(f'--profile-directory={EMAIL}')
+
+        options.add_argument(
+            '--user-data-dir=/home/tozix/dev/autocolab/chrome')
+        options.add_argument(f'--profile-directory=TozixDev')
+
         # Ждать полной загрузки страницы
         options.page_load_strategy = 'normal'
         self.driver = uc.Chrome(options=options)
+        # Ожидание до получения элементов
         self.driver.implicitly_wait(10)
         self.action = ActionChains(self.driver)
         self.auth = False
+        # Скоро не понадобится
         self.dom_type = {
             'TAG': By.TAG_NAME,
             'CLASS': By.CLASS_NAME,
@@ -59,7 +83,24 @@ class WebAction:
             'XPATH': By.XPATH
         }
 
+    def waiting(self, a, b):
+        """Пауза/Ожидание
+
+        Args:
+            a (float): ОТ
+            b (float): И ДО в секундах
+        """
+        rand = random.uniform(a, b)
+        log.debug(f"Ждем {rand} сек...")
+        sleep(rand)
+
     def save_to_html(self, elem=None):
+        """Сохраняем html элемента в файл.
+
+        Args:
+            elem (DOM object, optional): Dom объект.
+             Если нет, то целиком текущую страницу.
+        """
         now = str(datetime.datetime.today().strftime("%Y-%m-%d-%H%M%S"))
         if elem:
             with open(f"html/{now}_elem_page_source.html", "w", encoding='utf-8') as f:
@@ -70,6 +111,11 @@ class WebAction:
                 f.write(body.get_attribute('innerHTML'))
 
     def print_screen(self, action=""):
+        """Делает скрин экрана.
+
+        Args:
+            action (str, optional): Описание скрина, пойдет в название файла "".
+        """
         action = action.replace(" ", "_")
         now = str(datetime.datetime.today().strftime("%Y-%m-%d-%H%M%S"))
         stack = traceback.extract_stack()
@@ -96,10 +142,8 @@ class WebAction:
         """
         sleep(random.uniform(0.1, 1.0))
         self.action.click(el_obj).perform()
-        # После клика запускаем чекаем всплывающие окна
-        # self.check_dialog()
 
-    def search_el_atr_contains(self, tag, atr, contains):
+    def search_el_atr_contains(self, tag, atr, contains, obj=None):
         """Перебор всех элементов по тэгу.
         проверка на соотвествие значению атрибута.
 
@@ -111,99 +155,114 @@ class WebAction:
         Returns:
             Возращает DOM object если нашел
         """
-        elements = self.driver.find_elements(By.TAG_NAME, tag)
+        if not obj:
+            obj = self.driver
+        elements = obj.find_elements(By.TAG_NAME, tag)
         if elements:
             for idx, elem in enumerate(elements):
                 if elem.get_attribute(atr) is not None:
                     if contains in elem.get_attribute(atr):
                         return elements[idx]
-        return
+        return False
 
     def google_auth(self, email, password):
+        """Авторизация в гугл аккаунте.
+        Если работаем с профилями браузера, то нужна только при первом запуске.
+
+        Args:
+            email (str): мыло/логин
+            password (str): пароль
+        """
         self.email = email
         self.password = password
         self.driver.get('https://google.ru')
 
-        self.print_screen()
+        # self.print_screen()
         # Сохраняем id вкладки
         self.original_window = self.driver.current_window_handle
         # Ожидание после загрузки страницы
-        sleep(random.uniform(0.5, 5.0))
+        self.waiting(5, 10)
 
+        log.debug("Ищем кнопку на авторизацию")
         # Ищем ссылку(Элемент) на авторизацию
         link = self.search_el_atr_contains(
             'a', 'href', 'accounts.google.com/ServiceLogin')
+        sign_out_link = self.search_el_atr_contains(
+            'a', 'href', 'accounts.google.com/SignOutOptions')
+        if sign_out_link:
+            log.debug("Юзер уже авторизован!")
+            self.auth = True
+            return
+        self.human_like_mouse_move(link)
         # Кликаем по элементу
         self.click_to(link)
-        """Аутификация в гугл аккаунте
 
-        Args:
-            email (str): мыло
-            password (str): пароль
-        """
         # Ожижание перед началом авторизации
-        sleep(random.uniform(0.5, 3.0))
+        self.waiting(MIN_RAND, MAX_RAND)
 
         log.debug('Авторизация в ГУГЛ')
         # Скрин главной страницы
-        self.print_screen()
+        # self.print_screen()
 
         # Ввод пароля
         email_input = self.driver.find_element(By.ID, "identifierId")
+        self.human_like_mouse_move(email_input)
         self.emu_key_press(self.email, email_input)
 
         # Делаем скрин после ввода логина/email
-        sleep(random.uniform(0.5, 3.0))
+        self.waiting(MIN_RAND, MAX_RAND)
         # self.print_screen()
 
         # Нажимаем на кнопку
         nextButton = self.driver.find_element(By.ID, "identifierNext")
+        self.human_like_mouse_move(nextButton)
         self.click_to(nextButton)
 
-        sleep(random.uniform(1.0, 3.0))
+        self.waiting(MIN_RAND, MAX_RAND)
 
         # Ищем input поле и вводим пароль
         password_input = self.search_el_atr_contains(
             'input', 'type', 'password')
+        self.human_like_mouse_move(password_input)
         # div_password = self.driver.find_element(By.ID, 'password')
         # password_input = div_password.find_element(By.TAG_NAME, "input")
         self.emu_key_press(self.password, password_input)
         # Делаем скрин после ввода пароля
         # self.print_screen('after password')
 
-        # Ищем суббмит
+        self.waiting(MIN_RAND, MAX_RAND)
+        # Ищем сабмит
         passwordNext = self.driver.find_element(By.ID, "passwordNext")
         # self.save_to_html(passwordNext)
         # Пауза перед нажатием клавиши
-        sleep(random.uniform(1.0, 3.0))
-
+        self.human_like_mouse_move(passwordNext)
         # Клик по клавише
         self.click_to(passwordNext)
 
         # Делаем скрин после авторизации
-        sleep(random.uniform(1.0, 3.0))
+        self.waiting(MIN_RAND, MAX_RAND)
         # self.print_screen('after auth')
         self.auth = True
 
-    def colab_run(self):
-        # Разворачиваем экран
-        self.driver.maximize_window()
+    def colab_run(self, notepad_url):
         """Запуск скрипта колаба."""
+        # Разворачиваем экран
+        # self.driver.maximize_window()
+
         # Переходим на колаб
         log.info("Переходим на колаб в новой вкладке")
         self.driver.switch_to.new_window('tab')
-        self.driver.get(
-            'https://colab.research.google.com/drive/1u2dglBscyPswsUk-H2AHzDPOGTpB98RL?usp=sharing')
+        self.driver.get(notepad_url)
         self.colab_window = self.driver.current_window_handle
 
         # Ищем первую ячеку с кодом в блокноте
-        sleep(random.uniform(1.5, 6.0))
+        self.waiting(MIN_RAND, MAX_RAND)
         code_cell = self.driver.find_elements(
             By.CLASS_NAME, 'codecell-input-output')
         log.info("Кликаем на первый блокнот")
         self.click_to(code_cell[0])
 
-        sleep(random.uniform(1.5, 8.0))
+        self.waiting(MIN_RAND, MAX_RAND)
         # Жмем CTR+ENTER для запуска скрипта
         log.info("Нажимаем CTRL+ENTER")
         self.action.key_down(Keys.CONTROL).key_down(
@@ -212,7 +271,7 @@ class WebAction:
         i = 0
         while i < 3:
             i += 1
-            sleep(random.randint(1, 3))
+            self.waiting(MIN_RAND, MAX_RAND)
             if self.check_dialog():
                 self.paper_action()
 
@@ -221,142 +280,244 @@ class WebAction:
         log.debug("Коллаб запущен!")
         # Закрываем вкладку с колабом
         self.driver.close()
-        sleep(random.uniform(0.5, 1.1))
+        self.waiting(MIN_RAND, MAX_RAND)
         self.driver.switch_to.window(self.original_window)
         # self.print_screen("switch to main window")
 
+    def human_like_mouse_move(self, start_element):
+        points = [[6, 2], [3, 2], [0, 0], [0, 2]]
+        points = np.array(points)
+        x = points[:, 0]
+        y = points[:, 1]
+
+        t = range(len(points))
+        ipl_t = np.linspace(0.0, len(points) - 1, 100)
+
+        x_tup = si.splrep(t, x, k=1)
+        y_tup = si.splrep(t, y, k=1)
+
+        x_list = list(x_tup)
+        xl = x.tolist()
+        x_list[1] = xl + [0.0, 0.0, 0.0, 0.0]
+
+        y_list = list(y_tup)
+        yl = y.tolist()
+        y_list[1] = yl + [0.0, 0.0, 0.0, 0.0]
+
+        x_i = si.splev(ipl_t, x_list)
+        y_i = si.splev(ipl_t, y_list)
+
+        startElement = start_element
+
+        self.action.move_to_element(startElement)
+        self.action.perform()
+
+        c = 5
+        i = 0
+        for mouse_x, mouse_y in zip(x_i, y_i):
+            self.action.move_by_offset(mouse_x, mouse_y)
+            self.action.perform()
+            log.debug("Перемещаем курсор, %s ,%s" % (mouse_x, mouse_y))
+            i += 1
+            if i == c:
+                break
+
     def solve_recaptcha(self):
-        """_summary_
+        self.driver.get(
+            'https://www.google.com/recaptcha/api2/demo')
+        # Ищем фрейм с капчей
+        self.waiting(MIN_RAND, MAX_RAND)
+        # colab_recaptcha_dialog = self.find_until_located(
+        # self.driver, By.TAG_NAME, 'colab-recaptcha-dialog')
+        if self.colab_recaptcha_dialog:
+            log.debug("Нашел капча диалог")
+        else:
+            log.debug("НЕ нашел диалог")
 
-        Returns:
-            _type_: _description_
-        """
-        sleep(random.uniform(0.3, 5.0))
-        dialog = self.check_exists_element(
-            'TAG', 'colab-recaptcha-dialog')
-        iframe1 = self.check_exists_element(
-            'TAG', 'iframe', dialog)
-        self.save_to_html(iframe1)
+        iframe1 = self.search_el_atr_contains(
+            'iframe', "src", "recaptcha/api2/anchor", self.colab_recaptcha_dialog)
+
         self.driver.switch_to.frame(iframe1)
+        log.debug('Не смог найти фрейм???')
+        # Чекбокс капчи
+        self.waiting(MIN_RAND, MAX_RAND)
+        checkbox = self.find_until_clicklable(
+            self.driver, By.ID, 'recaptcha-anchor')
+        self.human_like_mouse_move(checkbox)
+        log.debug('Клик по: recaptcha-anchor')
+        self.click_to(checkbox)
 
-        sleep(random.uniform(0.3, 5.0))
+        self.waiting(MIN_RAND, MAX_RAND)
+        log.debug("Движение мышью")
+        self.human_like_mouse_move(checkbox)
 
-        checkbox_border = self.check_exists_element(
-            'CLASS', 'recaptcha-checkbox-border')
-        if checkbox_border:
-            log.debug('Клик по: recaptcha-checkbox-border')
-            self.click_to(checkbox_border)
-            self.driver.switch_to.default_content()
+        # Выходим из фрейма, на основную страницу
+        self.driver.switch_to.default_content()
+        # Это на случай, если google не распознал в нас бота
+        try:
+            self.driver.find_element(
+                By.CLASS_NAME, 'recaptcha-checkbox-checked')
+            log.debug('Нас не спалили, прошли тест Тьюринга!')
+            return True
+        except:
+            pass
+
+        log.debug("Ищем bframe")
+        bframe = self.search_el_atr_contains(
+            'iframe', "src", "recaptcha/api2/bframe", self.driver)
+        if bframe:
+            log.debug("Нашел bframe")
+            log.debug("Меняем фрейм")
+            self.driver.switch_to.frame(bframe)
         else:
+            log.error('Фрейм с картинками не найден!')
             return
 
-        sleep(random.uniform(0.3, 5.0))
-        checked = self.check_exists_element(
-            'CLASS', 'recaptcha-checkbox-checked')
-        if not checked:
-            dialog = self.check_exists_element(
-                'TAG', 'colab-recaptcha-dialog')
-            if not dialog:
-                log.debug('Капча успешно решена!')
-                return
+        self.waiting(MIN_RAND, MAX_RAND)
+        log.debug('Ищем аудиокнопку')
+        recaptcha_audio_button = self.find_until_located(
+            self.driver, By.ID, 'recaptcha-audio-button')
 
-        sleep(random.uniform(0.3, 5.0))
-        iframe2 = self.check_exists_element(
-            'XPATH', '//*[@title="текущую проверку reCAPTCHA можно пройти в течение ещё двух минут"]')
-        self.save_to_html(iframe2)
-        self.driver.switch_to.frame(iframe2)
+        self.waiting(MIN_RAND, MAX_RAND)
+        log.debug("Движение мышью")
+        self.human_like_mouse_move(recaptcha_audio_button)
+        log.debug('Клик по: recaptcha-audio-button')
 
-        recaptcha_audio_button = self.check_exists_element(
-            'ID', 'recaptcha-audio-button')
-        if recaptcha_audio_button:
-            log.debug('Клик по: recaptcha-audio-button')
-            self.click_to(recaptcha_audio_button)
-            self.driver.switch_to.default_content()
+        """
+        Костыльный костыль, гугл начинает менять свойства элементов,
+        а имено кнопки становятся то активными то нет в рандомном порядке,
+        как гирлянда, можно поймать исключение при попытке кликнуть
+        на устаревший элемент во время смены состояни!
+        find_until_clicklable - дает кликать только на доступный элемент, но
+        прямо во время клика может смениться состояние, по этому ниже
+        обработаю исключение
+        """
+        while True:
+            # find_until_clicklable - дает кликать только, на доступный к
+            try:
+                self.find_until_clicklable(
+                    self.driver, By.ID, 'recaptcha-audio-button').click()
+                log.debug("Клик прошел успешно!")
+                break
+            except:
+                log.debug("Вам повезло и вы поймали исключение!")
+        # Выходим из фрейма, на основную страницу
+        self.driver.switch_to.default_content()
+        log.debug("Ищем bframe")
+        bframe = self.search_el_atr_contains(
+            'iframe', "src", "recaptcha/api2/bframe", self.driver)
+        if bframe:
+            log.debug("Нашел bframe - audio")
+            log.debug("Меняем фрейм - audio")
+            self.driver.switch_to.frame(bframe)
         else:
-            sleep(600)
+            log.error('Фрейм аудио прослушать/скачать не найдено!')
             return
+        # Ищем кнопку для прослушивания аудио
+        play = self.find_until_clicklable(
+            self.driver, By.CSS_SELECTOR, 'button.rc-button-default.goog-inline-block')
+        download = self.find_until_located(
+            self.driver, By.CSS_SELECTOR, 'a.rc-audiochallenge-tdownload-link')
+        audio_response = self.find_until_located(
+            self.driver, By.ID, 'audio-response')
+        if play:
+            log.debug('Нашли кнопочку play')
+        if download:
+            log.debug('Нашли сслыку скачать')
+        if audio_response:
+            log.debug('Нашли сслыку поле ответа')
 
-        sleep(random.uniform(0.3, 5.0))
-        header_text = self.check_exists_element(
-            'CLASS', 'rc-doscaptcha-header-text')
-        if header_text:
-            self.driver.switch_to.default_content()
-            log.error(f'Походе гугл заблокировал прохождение капчи')
+        # Нажмем несколько раз кнопку воспроизвести, потом переместимся на поле ввода
+        for _ in range(random.randint(0, 1)):
+            self.waiting(MIN_RAND, MAX_RAND)
+            self.human_like_mouse_move(play)
+            log.debug('Клик по: play audio')
+            self.click_to(play)
+            self.waiting(3, 5)
 
-        log.info(f'Решение капчи капчи...')
-        tdownload_link = self.check_exists_element(
-            'CLASS', 'rc-audiochallenge-tdownload-link')
-        if tdownload_link:
-            audio_url = tdownload_link.get_attribute('href')
-            log.debug(f'URL аудио: {audio_url}')
-        else:
-            return
+        # Ткнем по ипуту, типа хочу ввести, то что просшулал
+        self.waiting(MIN_RAND, MAX_RAND)
+        self.human_like_mouse_move(audio_response)
+        self.click_to(audio_response)
+        log.debug('Клик по: audio_response')
+
+        # Перемещаемся и скачиваем аудиофайл
+        self.waiting(MIN_RAND, MAX_RAND)
+        self.human_like_mouse_move(download)
+
         log.info('Скачиваем аудио')
-        urllib.request.urlretrieve(audio_url, "audio/cap.mp3")
-        ass = AssemblyAI()
+        urllib.request.urlretrieve(
+            download.get_attribute('href'), "audio/cap.mp3")
+        ass = AssemblyAI(API_KEY, TRANSCRIPT_ENDPOINT, UPLOAD_ENDPOINT)
         text = ass.transcript("audio/cap.mp3")
 
-        audio_response = self.check_exists_element(
-            'ID', 'audio-response')
-        if not audio_response:
-            return
-
+        # Перемещаем на поле ввода
+        self.human_like_mouse_move(audio_response)
+        self.click_to(audio_response)
         self.emu_key_press(text, audio_response)
-        sleep(random.uniform(0.3, 5.0))
+        # Ну и снова ждем
+        self.waiting(MIN_RAND, MAX_RAND)
 
-        recaptcha_verify_button = self.check_exists_element(
-            'ID', 'recaptcha-verify-button')
-        if recaptcha_verify_button:
-            log.debug('recaptcha-verify-button')
-            self.click_to(recaptcha_verify_button)
-            self.driver.switch_to.default_content()
-        else:
-            return
+        recaptcha_verify_button = self.find_until_clicklable(self.driver, By.ID,
+                                                             'recaptcha-verify-button')
+        self.human_like_mouse_move(recaptcha_verify_button)
+        self.click_to(recaptcha_verify_button)
+        self.waiting(MIN_RAND, MAX_RAND)
+        self.driver.switch_to.default_content()
 
-        sleep(random.uniform(0.3, 5.0))
-        msg = self.check_exists_element(
-            'CLASS', 'rc-audiochallenge-error-message').text
-        if msg != '':
-            self.driver.switch_to.default_content()
-            log.error(f'Капча не решена: {str(msg)}')
-        else:
-            log.info('Капча решена')
-            self.driver.switch_to.default_content()
-
-        os.remove("audio/cap.mp3")
+        log.debug("Проверку прошел успешно")
 
     def paper_action(self):
         if self.dialog_type == "owner_dialog":
             buttons = self.dialog_obj.find_elements(
                 By.TAG_NAME, 'paper-button')
             if len(buttons) > 1:
-                sleep(random.randint(3, 8))
+                self.waiting(MIN_RAND, MAX_RAND)
                 log.info("Нажимаем по второй кнопке")
+                self.human_like_mouse_move(buttons[1])
                 self.click_to(buttons[1])
         elif self.dialog_type == "colab-recaptcha-dialog":
             log.debug('Запускаем решение рекапчи')
             self.solve_recaptcha()
         else:
             log.debug("Не описанное действие с окном, делаем скрин")
-            self.save_to_html(self.dialog_obj)
+            # self.save_to_html(self.dialog_obj)
             self.print_screen("No action")
 
-    def check_exists_element(self, by, cond, dom_obj=None):
+    def check_exists_element(self, find_by, cond, dom_obj=None):
+        """_summary_
+
+        Args:
+            find_by (_type_): _description_
+            cond (_type_): _description_
+            dom_obj (_type_, optional): _description_. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
         if not dom_obj:
             dom_obj = self.driver
         try:
-            page_obj = dom_obj.find_element(self.dom_type[by], cond)
+            page_obj = dom_obj.find_element(self.dom_type[find_by], cond)
         except NoSuchElementException:
-            log.info(f"Не нашел элемент {cond} по {by}")
+            log.info(f"Не нашел элемент {cond} по {find_by}")
             return False
         return page_obj
 
     def check_dialog(self):
+        """Проверка наличия диалоговых окон
+
+        Returns:
+            bool: Возращает True - если появились
+        """
         log.info('Чекаем вспылвающе окна')
 
         if self.check_exists_element('TAG', 'colab-recaptcha-dialog'):
             log.debug('Окно: НАШЕЛ colab-recaptcha-dialog')
             self.dialog_type = "colab-recaptcha-dialog"
+            self.colab_recaptcha_dialog = self.find_until_located(
+                self.driver, By.TAG_NAME, 'colab-recaptcha-dialog')
+            log.debug('Ну тип нашли значение')
             return True
 
         if self.check_exists_element('TAG', 'paper-dialog'):
@@ -367,9 +528,36 @@ class WebAction:
                 return True
 
         log.info("Диалоговых окон не нашел")
-        self.dialog_obj = None
         self.dialog_type = None
         return False
+
+    def find_until_located(self, driver, find_by, name, timeout=60):
+        """Корректна проверка на наличие элемента на странице.
+
+        Args:
+            driver (driver): Драйвер браузера
+            find_by (_type_): По какому элементу искать
+            name (_type_): Имя искомого элемента/объекта
+            timeout (int, optional): Таймаут, после после которого исключение вылетит.
+
+        Returns:
+            DOM obj: Найденый DOM
+        """
+        return WebDriverWait(driver, timeout).until(EC.presence_of_element_located((find_by, name)))
+
+    def find_until_clicklable(self, driver, find_by, name, timeout=60):
+        """Корректно возвращает элементы доступные для клика.
+
+        Args:
+            driver (driver): Драйвер браузера
+            find_by (_type_): По какому элементу искать
+            name (_type_): Имя искомого элемента/объекта
+            timeout (int, optional): Таймаут, после после которого исключение вылетит.
+
+        Returns:
+            DOM obj: Найденый DOM
+        """
+        return WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((find_by, name)))
 
     def __del__(self):
         log.debug("Закрываем браузер при уничтожении объекта")
