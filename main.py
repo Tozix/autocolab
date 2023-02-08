@@ -4,7 +4,9 @@ from random import randint
 from time import sleep
 
 from dotenv import load_dotenv
-from selenium.common.exceptions import UnexpectedAlertPresentException
+from selenium.common.exceptions import (NoAlertPresentException,
+                                        NoSuchWindowException,
+                                        UnexpectedAlertPresentException)
 
 import logger
 from web import WebAction
@@ -21,7 +23,7 @@ log = logger.setup_applevel_logger(file_name='logs/main.log')
 
 def main():
     try:
-        web = WebAction(True)
+        web = WebAction()
         # Авторизуемся в гугле
         if not web.auth:
             web.google_auth(EMAIL, PASSWORD)
@@ -32,11 +34,11 @@ def main():
             log.debug(f"Ожидаем перед повторным запуском: {wait_time} сек.")
             sleep(wait_time)
     except UnexpectedAlertPresentException:
-        sleep(600)
         log.error("Поймал алерт!")
-        web.driver.switch_to.alert.accept()
-        # Возвращаемся на страницу
-        web.driver.switch_to.default_content()
+    except NoAlertPresentException:
+        log.error("Не смог подтвердить алерт!!")
+    except NoSuchWindowException:
+        log.error('Закрыто окно браузера')
 
 
 if __name__ == '__main__':

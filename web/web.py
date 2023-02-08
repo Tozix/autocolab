@@ -51,7 +51,7 @@ class WebAction:
         # Отключаем инфобары
         options.add_argument("--disable-infobars")
         # Работать в полноэранном режиме
-        # options.add_argument("start-maximized")
+        options.add_argument("start-maximized")
         # Отключить уведомления
         options.add_argument("--disable-notifications")
         options.add_experimental_option(
@@ -70,7 +70,9 @@ class WebAction:
 
         # Ждать полной загрузки страницы
         options.page_load_strategy = 'normal'
-        self.driver = uc.Chrome(options=options)
+
+        self.driver = uc.Chrome(driver_executable_path="/home/tozix/dev/autocolab/chromedriver",
+                                options=options)
         # Ожидание до получения элементов
         self.driver.implicitly_wait(10)
         self.action = ActionChains(self.driver)
@@ -181,18 +183,23 @@ class WebAction:
         # Сохраняем id вкладки
         self.original_window = self.driver.current_window_handle
         # Ожидание после загрузки страницы
-        self.waiting(5, 10)
+        self.waiting(MIN_RAND, MAX_RAND)
 
         log.debug("Ищем кнопку на авторизацию")
         # Ищем ссылку(Элемент) на авторизацию
         link = self.search_el_atr_contains(
             'a', 'href', 'accounts.google.com/ServiceLogin')
+        log.debug("Ищем ссылку на выход из аккаунта")
         sign_out_link = self.search_el_atr_contains(
             'a', 'href', 'accounts.google.com/SignOutOptions')
         if sign_out_link:
+            self.print_screen('Session Exist!')
             log.debug("Юзер уже авторизован!")
             self.auth = True
             return
+
+        self.print_screen()
+        log.debug("Перемешаем курсор к кнопке войти")
         self.human_like_mouse_move(link)
         # Кликаем по элементу
         self.click_to(link)
@@ -202,46 +209,58 @@ class WebAction:
 
         log.debug('Авторизация в ГУГЛ')
         # Скрин главной страницы
-        # self.print_screen()
+        # self.print_screen('Google main page')
 
-        # Ввод пароля
-        email_input = self.driver.find_element(By.ID, "identifierId")
+        # Ввод логина/почты
+        email_input = self.find_until_located(
+            self.driver, By.ID, "identifierId")
         self.human_like_mouse_move(email_input)
         self.emu_key_press(self.email, email_input)
 
         # Делаем скрин после ввода логина/email
         self.waiting(MIN_RAND, MAX_RAND)
-        # self.print_screen()
+        # self.print_screen("After email typing")
 
         # Нажимаем на кнопку
-        nextButton = self.driver.find_element(By.ID, "identifierNext")
+        nextButton = self.find_until_located(
+            self.driver, By.ID, "identifierNext")
         self.human_like_mouse_move(nextButton)
         self.click_to(nextButton)
 
+        log.debug('Ищем Поле password')
         self.waiting(MIN_RAND, MAX_RAND)
+        # self.print_screen("PASSWORD?")
 
+        # password_obj = self.find_until_located(self.driver, By.ID, 'password')
         # Ищем input поле и вводим пароль
+        # password_input = self.find_until_located(password_obj, By.TAG_NAME,'input')
         password_input = self.search_el_atr_contains(
-            'input', 'type', 'password')
+            'input', 'autocomplete', 'password')
         self.human_like_mouse_move(password_input)
+        self.click_to(password_input)
+        # self.print_screen("BEFORE password typing")
         # div_password = self.driver.find_element(By.ID, 'password')
         # password_input = div_password.find_element(By.TAG_NAME, "input")
         self.emu_key_press(self.password, password_input)
         # Делаем скрин после ввода пароля
         # self.print_screen('after password')
+        # self.print_screen("AFTER password typing")
 
-        self.waiting(MIN_RAND, MAX_RAND)
         # Ищем сабмит
-        passwordNext = self.driver.find_element(By.ID, "passwordNext")
+        passwordNext = self.find_until_located(
+            self.driver, By.ID, "passwordNext")
+        if passwordNext:
+            log.debug('Нашел passwordNext')
         # self.save_to_html(passwordNext)
         # Пауза перед нажатием клавиши
+        self.waiting(MIN_RAND, MAX_RAND)
         self.human_like_mouse_move(passwordNext)
         # Клик по клавише
         self.click_to(passwordNext)
 
         # Делаем скрин после авторизации
         self.waiting(MIN_RAND, MAX_RAND)
-        # self.print_screen('after auth')
+       # self.print_screen('after auth')
         self.auth = True
 
     def colab_run(self, notepad_url):
@@ -274,7 +293,6 @@ class WebAction:
             self.waiting(MIN_RAND, MAX_RAND)
             if self.check_dialog():
                 self.paper_action()
-
         # self.print_screen("Colab running!")
 
         log.debug("Коллаб запущен!")
@@ -323,22 +341,12 @@ class WebAction:
                 break
 
     def solve_recaptcha(self):
-        self.driver.get(
-            'https://www.google.com/recaptcha/api2/demo')
         # Ищем фрейм с капчей
         self.waiting(MIN_RAND, MAX_RAND)
-        # colab_recaptcha_dialog = self.find_until_located(
-        # self.driver, By.TAG_NAME, 'colab-recaptcha-dialog')
-        if self.colab_recaptcha_dialog:
-            log.debug("Нашел капча диалог")
-        else:
-            log.debug("НЕ нашел диалог")
-
         iframe1 = self.search_el_atr_contains(
             'iframe', "src", "recaptcha/api2/anchor", self.colab_recaptcha_dialog)
 
         self.driver.switch_to.frame(iframe1)
-        log.debug('Не смог найти фрейм???')
         # Чекбокс капчи
         self.waiting(MIN_RAND, MAX_RAND)
         checkbox = self.find_until_clicklable(
@@ -561,4 +569,4 @@ class WebAction:
 
     def __del__(self):
         log.debug("Закрываем браузер при уничтожении объекта")
-        self.driver.quit()
+        # self.driver.quit()
