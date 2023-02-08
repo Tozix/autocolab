@@ -22,7 +22,7 @@ log = logger.setup_applevel_logger(file_name='logs/main.log')
 
 def main():
     try:
-        web = WebAction(False)
+        web = WebAction()
         # Авторизуемся в гугле
         if not web.auth:
             web.google_auth(EMAIL, PASSWORD)
