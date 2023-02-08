@@ -17,7 +17,6 @@ PASSWORD = os.getenv('PASSWORD')
 USER_DATA_DIR = os.getenv('USER_DATA_DIR')
 APP_LOGGER_NAME = __name__
 notepad_url = "https://colab.research.google.com/drive/1u2dglBscyPswsUk-H2AHzDPOGTpB98RL?usp=sharing"
-BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 log = logger.setup_applevel_logger(file_name='logs/main.log')
 
 

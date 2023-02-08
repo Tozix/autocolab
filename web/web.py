@@ -34,6 +34,7 @@ MIN_RAND = 0.64
 MAX_RAND = 1.27
 LONG_MIN_RAND = 4.78
 LONG_MAX_RAND = 11.1
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 class WebAction:
@@ -71,7 +72,7 @@ class WebAction:
         # Ждать полной загрузки страницы
         options.page_load_strategy = 'normal'
 
-        self.driver = uc.Chrome(driver_executable_path="chromedriver",
+        self.driver = uc.Chrome(driver_executable_path=f"{BASE_PATH}/chromedriver",
                                 options=options)
         # Ожидание до получения элементов
         self.driver.implicitly_wait(10)
