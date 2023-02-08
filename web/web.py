@@ -533,7 +533,7 @@ class WebAction:
         Returns:
             bool: Возращает True - если появились
         """
-        log.info('Чекаем вспылвающе окна')
+        log.info('Чекаем вспылвающие окна')
 
         if self.check_exists_element('TAG', 'colab-recaptcha-dialog'):
             log.debug('Окно: НАШЕЛ colab-recaptcha-dialog')
