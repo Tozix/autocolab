@@ -29,7 +29,7 @@ log = logger.get_logger(__name__)
 API_KEY = os.getenv('API_KEY')
 UPLOAD_ENDPOINT = os.getenv('UPLOAD_ENDPOINT')
 TRANSCRIPT_ENDPOINT = os.getenv('TRANSCRIPT_ENDPOINT')
-USER_DATA_DIR = "/home/tozix/dev/autocolab/chrome"
+USER_DATA_DIR = "chrome"
 MIN_RAND = 0.64
 MAX_RAND = 1.27
 LONG_MIN_RAND = 4.78
@@ -65,13 +65,13 @@ class WebAction:
         options.add_argument('--enable-profile-shortcut-manager')
 
         options.add_argument(
-            '--user-data-dir=/home/tozix/dev/autocolab/chrome')
-        options.add_argument(f'--profile-directory=TozixDev')
+            '--user-data-dir=chrome')
+        options.add_argument(f'--profile-directory={EMAIL}')
 
         # Ждать полной загрузки страницы
         options.page_load_strategy = 'normal'
 
-        self.driver = uc.Chrome(driver_executable_path="/home/tozix/dev/autocolab/chromedriver",
+        self.driver = uc.Chrome(driver_executable_path="chromedriver",
                                 options=options)
         # Ожидание до получения элементов
         self.driver.implicitly_wait(10)
@@ -287,11 +287,13 @@ class WebAction:
         self.action.key_down(Keys.CONTROL).key_down(
             Keys.ENTER).key_up(Keys.CONTROL).perform()
 
-        i = 0
-        while i < 3:
-            i += 1
+        count_dialog_check = 0
+        while count_dialog_check < 3:
+            count_dialog_check += 1
             self.waiting(MIN_RAND, MAX_RAND)
             if self.check_dialog():
+                # Если появилось диалоговое окно, то сбрасываем счетчик
+                count_dialog_check = 0
                 self.paper_action()
         # self.print_screen("Colab running!")
 
@@ -355,9 +357,9 @@ class WebAction:
         log.debug('Клик по: recaptcha-anchor')
         self.click_to(checkbox)
 
-        self.waiting(MIN_RAND, MAX_RAND)
-        log.debug("Движение мышью")
-        self.human_like_mouse_move(checkbox)
+        # self.waiting(MIN_RAND, MAX_RAND)
+        # log.debug("Движение мышью")
+        # self.human_like_mouse_move(checkbox)
 
         # Выходим из фрейма, на основную страницу
         self.driver.switch_to.default_content()
@@ -436,7 +438,7 @@ class WebAction:
             log.debug('Нашли сслыку поле ответа')
 
         # Нажмем несколько раз кнопку воспроизвести, потом переместимся на поле ввода
-        for _ in range(random.randint(0, 1)):
+        for _ in range(random.randint(0, 2)):
             self.waiting(MIN_RAND, MAX_RAND)
             self.human_like_mouse_move(play)
             log.debug('Клик по: play audio')
@@ -475,6 +477,15 @@ class WebAction:
 
         log.debug("Проверку прошел успешно")
 
+    def gpu_limits(self):
+        buttons = self.dialog_obj.find_elements(
+            By.TAG_NAME, 'paper-button')
+        if len(buttons) > 1:
+            self.waiting(MIN_RAND, MAX_RAND)
+            log.info("Соглашемся на работу без GPU")
+            self.human_like_mouse_move(buttons[1])
+            self.click_to(buttons[1])
+
     def paper_action(self):
         if self.dialog_type == "owner_dialog":
             buttons = self.dialog_obj.find_elements(
@@ -487,6 +498,9 @@ class WebAction:
         elif self.dialog_type == "colab-recaptcha-dialog":
             log.debug('Запускаем решение рекапчи')
             self.solve_recaptcha()
+        elif self.dialog_type == "limit_dialog":
+            log.debug("Лимит на использование GPU исчерпан")
+            self.gpu_limits()
         else:
             log.debug("Не описанное действие с окном, делаем скрин")
             # self.save_to_html(self.dialog_obj)
@@ -527,12 +541,16 @@ class WebAction:
                 self.driver, By.TAG_NAME, 'colab-recaptcha-dialog')
             log.debug('Ну тип нашли значение')
             return True
-
-        if self.check_exists_element('TAG', 'paper-dialog'):
-            self.dialog_obj = self.check_exists_element('TAG', 'paper-dialog')
+        self.dialog_obj = self.check_exists_element('TAG', 'paper-dialog')
+        if self.dialog_obj:
             if self.check_exists_element("TAG", 'b', self.dialog_obj):
                 log.debug("Окно: Подтвердите запуск чужого блокнота")
                 self.dialog_type = "owner_dialog"
+                return True
+            if self.search_el_atr_contains('a', 'href', 'colaboratory/faq.html#usage-limits', self.dialog_obj):
+                log.debug(
+                    "Окно: Невозможно подключиться к ускорителю (GPU) из-за лимитов на использование в Colab.")
+                self.dialog_type = "limit_dialog"
                 return True
 
         log.info("Диалоговых окон не нашел")

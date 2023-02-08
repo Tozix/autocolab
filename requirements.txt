@@ -18,3 +18,5 @@ undetected-chromedriver==3.2.1
 urllib3==1.26.14
 websockets==10.4
 wsproto==1.2.0
+numpy==1.24.2
+scipy==1.10.0
